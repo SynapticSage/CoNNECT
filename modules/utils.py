@@ -58,6 +58,10 @@ def pickup_bin(hist, begin0, end0, begin1, end1):
     end0 += center
     begin1 += center
     end1 += center
+    begin0 = int(begin0)
+    begin1 = int(begin1)
+    end0 = int(end0)
+    end1 = int(end1)
 
     return np.hstack([hist[:, begin0:end0], hist[:, begin1:end1]])
 
