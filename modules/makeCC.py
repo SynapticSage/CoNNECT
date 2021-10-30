@@ -18,11 +18,13 @@ import cython
 import numpy as np
 import math
 import sys
+from numba import cuda
 from joblib import Parallel, delayed
 #from crosscorrelogram import computeCC, computeAutoCC
 from crosscorrelogram_gpu import computeAutoCC, computeCC
+from itertools import product
 
-max_block_len = 65536/2
+max_block_len = 65536/4
 def return_threads_and_blocks(spiketrain, i, j,
                               threads_per_block=64,
                               block_dim=2):
@@ -31,18 +33,18 @@ def return_threads_and_blocks(spiketrain, i, j,
     spike_product = Ni * Nj
     spike_product /= threads_per_block
     sq_Nspike = spike_product**(-block_dim)
-    chunks = (sq_Nspike // max_block_len) + 1
     N = np.ceil(np.min((sq_Nspike, max_block_len)))
+    chunks = (sq_Nspike // max_block_len) + 1
     N = np.max((2, N)).astype('int')
     if block_dim == 1:
         blocks_per_grid = (N, 1, 1)
-        threads_per_block = (threads_per_block, 1, 1)
+        #threads_per_block = (threads_per_block, 1, 1)
     elif block_dim == 2:
         blocks_per_grid = (N, N, 1)
-        threads_per_block = (threads_per_block, 1, 1)
+        #threads_per_block = (threads_per_block, threads_per_block, 1)
     elif block_dim == 3:
         blocks_per_grid = (N, N, N)
-        threads_per_block = (threads_per_block, 1, 1)
+        #threads_per_block = (threads_per_block, 1, 1)
 
     return blocks_per_grid, threads_per_block, int(chunks)
 
@@ -57,14 +59,21 @@ def computeHist(i, j, spiketrain, Begin, End):
     #histogram = computeCC(spike1, spike0, Begin, End)
     histogram = np.zeros(shape=int(End-Begin),
                          dtype=np.int64)
-    blocks_per_grid, threads_per_block, chunks = return_threads_and_blocks(spiketrain, i, j)
+    blocks_per_grid, threads_per_block, chunks = \
+        return_threads_and_blocks(spiketrain, i, j)
     if chunks > 1:
-        for chunk in range(chunks):
-            start, end = 0 + chunk*max_block_len, \
-                         np.max((chunk*max_block_len, len(spike1)))
-            computeCC[blocks_per_grid, threads_per_block](histogram, spike1[start:end], spike0, Begin, End)
+        for chunk1, chunk0 in product(range(chunks), range(chunks)):
+            start1, end1 = 0 + chunk1*max_block_len, \
+                         np.max((chunk1*max_block_len, len(spike1)))
+            start0, end0 = 0 + chunk0*max_block_len, \
+                         np.max((chunk0*max_block_len, len(spike0)))
+            computeCC[blocks_per_grid, threads_per_block](histogram,
+                                                          spike1[start1:end1],
+                                                          spike0[start0:end0],
+                                                          Begin, End)
     else:
-        computeCC[blocks_per_grid, threads_per_block](histogram, spike1, spike0, Begin, End)
+        computeCC[blocks_per_grid, threads_per_block](histogram, spike1,
+                                                      spike0, Begin, End)
 
     return i, j, histogram
 
@@ -93,15 +102,24 @@ def makeCC_allpair(spikes, Begin, End, N_thred):
             histogram = np.zeros(shape=int(End-Begin),
                                  dtype=np.int64)
             blocks_per_grid, \
-                threads_per_block, chunks = return_threads_and_blocks(spiketrain, i, i)
+                threads_per_block, chunks = \
+                 return_threads_and_blocks(spiketrain, i, i)
             #histogram = computeAutoCC(spiketrain[i], Begin, End)
             if chunks <= 1:
-                computeAutoCC[blocks_per_grid, threads_per_block](histogram, spiketrain[i], Begin, End)
+                computeAutoCC[blocks_per_grid, threads_per_block](histogram,
+                                                                  spiketrain[i],
+                                                                  Begin, End)
             else:
-                for chunk in range(chunks):
-                    start, end = 0 + chunk*max_block_len, \
-                                 np.max((chunk*max_block_len, len(spiketrain[i])))
-                    computeAutoCC[blocks_per_grid, threads_per_block](histogram, spiketrain[i], Begin, End)
+                for chunk1, chunk0 in product(range(chunks), range(chunks)):
+                    start1, end1 = 0 + chunk1*max_block_len, \
+                                 np.max((chunk1*max_block_len, len(spiketrain[i])))
+                    start0, end0 = 0 + chunk0*max_block_len, \
+                                 np.max((chunk0*max_block_len, len(spiketrain[i])))
+                    computeCC[blocks_per_grid,
+                              threads_per_block](histogram,
+                                                 spiketrain[i][start1:end1],
+                                                 spiketrain[i][start0:end0],
+                                                 Begin, End)
             return i, j, histogram
         else:
             return computeHist(i, j, spiketrain, Begin, End)

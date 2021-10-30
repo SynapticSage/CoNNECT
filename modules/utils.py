@@ -18,7 +18,7 @@
 import os
 import numpy as np
 
-def load_data(filepath):
+def load_data(filepath, timefactor=None):
     """
     ;区切りのデータをnumpyで扱える形に読み込む
 
@@ -37,6 +37,9 @@ def load_data(filepath):
     for index in range(N_neuron):
         spikes.append(np.array([x for x in lines[index].split("\n") if x],
                                dtype=np.float64))
+
+    if timefactor:
+        spikes = [sp * timefactor for sp in spikes]
 
     return spikes
 
